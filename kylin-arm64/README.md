@@ -28,7 +28,7 @@ kylin-arm64/
 ├── verify/verify.sh               按原版说明的规则做验证（19 项用例）
 ├── payload/components/            内置组件（nginx/php-fpm/apache/mysql/ftp）
 ├── src/                           安装器、控制台、模板、站点、systemd 单元、面板
-└── docs/{逆向报告,麒麟部署手册,验证记录}.md
+└── docs/{麒麟部署手册,验证记录,常见问题}.md
 ```
 
 ## 安装（目标机，离线可用）

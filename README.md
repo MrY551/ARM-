@@ -10,7 +10,7 @@ kylin-arm64/
 ├── tools/gen-components.sh  从任意 arm64 sysroot 生成自包含组件包
 ├── src/                     安装器、命令行、面板、模板、systemd 单元、站点
 ├── verify/verify.sh         19 项验收用例
-└── docs/                    逆向报告、部署手册、验证记录、常见问题、用户手册
+└── docs/                    部署手册、验证记录、常见问题、用户手册
 ```
 
 组件：Nginx 1.18.0 / Apache 2.4.62 / PHP-FPM 7.4.33 / MariaDB 10.5.23 / vsftpd 3.0.3
@@ -60,7 +60,6 @@ sudo xiaohuang start
 - [用户手册](kylin-arm64/src/docs/用户手册.md) — 安装、配置、日常操作、排错
 - [常见问题](kylin-arm64/docs/常见问题.md) — 11 章，现象→原因→命令→验证
 - [麒麟部署手册](kylin-arm64/docs/麒麟部署手册.md) — 交付方视角：验收清单、系统集成
-- [逆向报告](kylin-arm64/docs/逆向报告.md) — 原版安装契约的取证过程
 - [验证记录](kylin-arm64/docs/验证记录.md) — 19 项用例与历次缺陷修复
 
 ## 许可
