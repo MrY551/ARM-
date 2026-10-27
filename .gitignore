@@ -1,0 +1,39 @@
+# 仓库根目录里的临时件（调试脚本、截图、浏览器 profile、解包工作区）
+/*.sh
+/*.py
+/*.txt
+/*.log
+/*.url
+/*.png
+/*.jpg
+/*.zip
+/*.deb
+/*.run
+/shots/
+/edgeprof/
+/work/
+/inno/
+
+# 构建产物：组件 tar.gz 和安装包都能从源码重建，不进仓库
+kylin-arm64/dist/
+kylin-arm64/payload/
+
+# 备份快照
+kylin-arm64/*.bak.*
+kylin-arm64/*.bak.*/
+*.orig
+*.rej
+
+# 解包/测试中间态
+kylin-arm64/_pack/
+kylin-arm64/rootfs/
+kylin-arm64/sysroot/
+
+# 编辑器与系统垃圾
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini

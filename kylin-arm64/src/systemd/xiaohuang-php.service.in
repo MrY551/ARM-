@@ -1,0 +1,16 @@
+[Unit]
+Description=Xiao Huang PHP-FPM (by 小黄 · Kylin ARM64)
+Documentation=file://@INSTALL_DIR@/README.txt
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@PHP_FPM_BIN@ -R -F -c @PHP_HOME@/etc -y @PHP_HOME@/etc/php-fpm.conf
+ExecReload=/bin/kill -USR2 $MAINPID
+Restart=always
+RestartSec=2
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

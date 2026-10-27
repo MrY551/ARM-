@@ -1,0 +1,20 @@
+[Unit]
+Description=Xiao Huang Apache (by 小黄 · Kylin ARM64)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Apache 用 -DFOREGROUND 前台运行，避免 forking 判定失败
+Type=simple
+ExecStart=@APACHE_BIN@ -DFOREGROUND -f @APACHE_HOME@/conf/httpd.conf
+ExecReload=/bin/kill -USR1 $MAINPID
+ExecStop=/bin/kill -TERM $MAINPID
+Restart=on-failure
+RestartSec=2
+LimitNOFILE=65535
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=xiaohuang-apache
+
+[Install]
+WantedBy=multi-user.target

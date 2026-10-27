@@ -1,0 +1,18 @@
+[Unit]
+Description=Xiao Huang MySQL (by 小黄 · Kylin ARM64)
+Documentation=file://@INSTALL_DIR@/README.txt
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@MYSQLD_BIN@ --defaults-file=@MYSQL_HOME@/etc/my.cnf --user=root
+ExecStop=/bin/kill -TERM $MAINPID
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=120
+TimeoutStopSec=120
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

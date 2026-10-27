@@ -1,0 +1,16 @@
+[Unit]
+Description=Xiao Huang Panel (by 小黄 · Kylin ARM64)
+Documentation=file://@INSTALL_DIR@/README.txt
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@INSTALL_DIR@/app/panel
+ExecStart=@PHP_CLI_BIN@ -c @PHP_HOME@/etc -S 127.0.0.1:@PANEL_PORT@ -t @INSTALL_DIR@/app/panel
+Restart=on-failure
+RestartSec=2
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

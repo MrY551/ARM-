@@ -1,0 +1,14 @@
+[Unit]
+Description=Xiao Huang FTP Server (vsftpd, Kylin ARM64)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@FTP_BIN@ @FTP_HOME@/etc/vsftpd.conf
+Restart=on-failure
+RestartSec=2
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

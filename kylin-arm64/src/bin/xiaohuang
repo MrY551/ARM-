@@ -1,0 +1,791 @@
+#!/usr/bin/env bash
+# Xiao Huang for Kylin ARM64 —— 控制台
+# 等价于 Windows 版面板（xiaohuang_pro.exe）的操作面：服务启停、端口、站点、数据库、日志、修复
+set -uo pipefail
+
+SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+SELF_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+
+# 允许通过环境变量覆盖（便于测试）
+INSTALL_DIR="${XIAOHUANG_HOME:-}"
+if [ -z "$INSTALL_DIR" ]; then
+    case "$SELF_DIR" in
+        */bin) INSTALL_DIR="$(cd "$SELF_DIR/.." && pwd)" ;;
+        *)     INSTALL_DIR="$(cd "$SELF_DIR/../.." && pwd)" ;;
+    esac
+fi
+
+MANIFEST="$INSTALL_DIR/xiaohuang.ini"
+if [ ! -f "$MANIFEST" ]; then
+    printf '[FAIL] 未找到安装清单 %s，Xiao Huang 可能未正确安装。\n' "$MANIFEST" >&2
+    exit 3
+fi
+
+# shellcheck source=common.sh
+. "$INSTALL_DIR/lib/common.sh"
+# shellcheck source=cmds.sh
+[ -f "$INSTALL_DIR/lib/cmds.sh" ] && . "$INSTALL_DIR/lib/cmds.sh"
+
+m() { manifest_get "$INSTALL_DIR" "$1" 2>/dev/null || true; }
+
+SUPERVISOR="$(m SUPERVISOR)"; SUPERVISOR="${SUPERVISOR:-pidfile}"
+NGINX_HOME="$(m NGINX_HOME)"; NGINX_BIN="$(m NGINX_BIN)"
+PHP_HOME="$(m PHP_HOME)"; PHP_FPM_BIN="$(m PHP_FPM_BIN)"; PHP_CLI_BIN="$(m PHP_CLI_BIN)"
+APACHE_HOME="$(m APACHE_HOME)"; APACHE_BIN="$(m APACHE_BIN)"
+MYSQL_HOME="$(m MYSQL_HOME)"; MYSQLD_BIN="$(m MYSQLD_BIN)"
+FTP_HOME="$(m FTP_HOME)"; FTP_BIN="$(m FTP_BIN)"; FTP_PORT="$(m FTP_PORT)"; FTP_VER="$(m FTP_VER)"
+WWW_ROOT="$(m WWW_ROOT)"; LOG_DIR="$(m LOG_DIR)"
+RUN_DIR="$INSTALL_DIR/run"
+HTTP_PORT="$(m HTTP_PORT)"
+DB_PORT="$(m DB_PORT)"
+PHP_FPM_PORT="$(m PHP_FPM_PORT)"
+NGINX_VER="$(m NGINX_VER)"; PHP_VER="$(m PHP_VER)"; APACHE_VER="$(m APACHE_VER)"; MYSQL_VER="$(m MYSQL_VER)"
+
+WEB_SERVER="$(m WEB_SERVER)"; WEB_SERVER="${WEB_SERVER:-nginx}"
+# 默认启停集合 = 当前 Web 服务器 + PHP + MySQL（Nginx/Apache 同端口，只能其一）
+SERVICES="$WEB_SERVER"
+[ -n "$PHP_FPM_BIN" ] && SERVICES="$SERVICES php"
+[ -n "$MYSQLD_BIN" ] && SERVICES="$SERVICES mysql"
+[ -n "$FTP_BIN" ] && SERVICES="$SERVICES ftp"
+# 已安装的全部服务
+INSTALLED="nginx"
+[ -n "$APACHE_BIN" ] && INSTALLED="$INSTALLED apache"
+[ -n "$PHP_FPM_BIN" ] && INSTALLED="$INSTALLED php"
+[ -n "$MYSQLD_BIN" ] && INSTALLED="$INSTALLED mysql"
+[ -n "$FTP_BIN" ] && INSTALLED="$INSTALLED ftp"
+
+# ---------------------------------------------------------------------------
+# pid 文件路径
+# ---------------------------------------------------------------------------
+pid_file() {
+    case "$1" in
+        nginx)  printf '%s/logs/nginx.pid' "$NGINX_HOME" ;;
+        php)    printf '%s/php-fpm.pid' "$RUN_DIR" ;;
+        apache) printf '%s/httpd.pid' "$RUN_DIR" ;;
+        mysql)  printf '%s/mysqld.pid' "$RUN_DIR" ;;
+    esac
+}
+unit_name() { printf 'xiaohuang-%s.service' "$1"; }
+
+# ---------------------------------------------------------------------------
+# 服务操作
+# ---------------------------------------------------------------------------
+svc_start_pidfile() {
+    local svc="$1" pf
+    pf="$(pid_file "$svc")"
+    if [ -f "$pf" ] && kill -0 "$(cat "$pf" 2>/dev/null)" 2>/dev/null; then
+        log_info "$svc 已在运行 (pid $(cat "$pf"))"
+        return 0
+    fi
+    case "$svc" in
+        nginx)
+            [ -n "$NGINX_BIN" ] || return 1
+            "$NGINX_BIN" -t -c "$NGINX_HOME/conf/nginx.conf" -p "$NGINX_HOME" >/dev/null 2>&1 \
+                || { log_error "nginx 配置检查失败: $NGINX_HOME/conf/nginx.conf"; return 1; }
+            "$NGINX_BIN" -c "$NGINX_HOME/conf/nginx.conf" -p "$NGINX_HOME" \
+                || { log_error "nginx 启动失败"; return 1; }
+            ;;
+        php)
+            [ -n "$PHP_FPM_BIN" ] || return 1
+            # -R: 允许 root 运行（FPM 主进程）；-c 指定 php.ini 目录；-y 指定 fpm 配置
+            "$PHP_FPM_BIN" -R -c "$PHP_HOME/etc" -y "$PHP_HOME/etc/php-fpm.conf" \
+                || { log_error "php-fpm 启动失败（查看 $LOG_DIR/php-fpm.log）"; return 1; }
+            ;;
+        apache)
+            [ -n "$APACHE_BIN" ] || return 1
+            "$APACHE_BIN" -f "$APACHE_HOME/conf/httpd.conf" -k start \
+                || { log_error "apache 启动失败（查看 $LOG_DIR/apache-error.log）"; return 1; }
+            ;;
+        mysql)
+            [ -n "$MYSQLD_BIN" ] || return 1
+            nohup "$MYSQLD_BIN" --defaults-file="$MYSQL_HOME/etc/my.cnf" --user=root \
+                >>"$LOG_DIR/mysqld-console.log" 2>&1 &
+            local i
+            for i in $(seq 1 30); do
+                [ -S "$RUN_DIR/mysql.sock" ] && break
+                sleep 0.5
+            done
+            [ -S "$RUN_DIR/mysql.sock" ] || { log_error "mysqld 启动失败（查看 $MYSQL_HOME/log/error.log）"; return 1; }
+            ;;
+        *) return 1 ;;
+    esac
+    log_ok "$svc 已启动"
+    return 0
+}
+
+svc_stop_pidfile() {
+    local svc="$1" pf pid i
+    pf="$(pid_file "$svc")"
+    pid="$(cat "$pf" 2>/dev/null || true)"
+    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+        log_info "$svc 未在运行"
+        rm -f "$pf"
+        return 0
+    fi
+    case "$svc" in
+        nginx)  "$NGINX_BIN" -s quit -c "$NGINX_HOME/conf/nginx.conf" -p "$NGINX_HOME" >/dev/null 2>&1 || kill "$pid" 2>/dev/null ;;
+        php)    kill -QUIT "$pid" 2>/dev/null || kill "$pid" 2>/dev/null ;;
+        apache) "$APACHE_BIN" -f "$APACHE_HOME/conf/httpd.conf" -k stop >/dev/null 2>&1 || kill "$pid" 2>/dev/null ;;
+        mysql)  kill "$pid" 2>/dev/null ;;
+    esac
+    for i in $(seq 1 20); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.5
+    done
+    kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+    rm -f "$pf"
+    log_ok "$svc 已停止"
+    return 0
+}
+
+
+# 服务启动失败时现场取证：journal 最后几行 + 组件自己的配置检查
+diag_service_failure() {
+    local svc="$1" unit="$2"
+    printf '\n' >&2
+    log_info "---- $svc 失败原因 ----"
+
+    # 1) systemd 记录的 stderr（最直接）
+    local jj
+    jj="$(journalctl -u "$unit" -n 20 --no-pager -o cat 2>/dev/null | tail -12)"
+    if [ -n "$jj" ]; then
+        printf '%s\n' "$jj" | sed 's/^/       /' >&2
+    else
+        printf '       （journal 里没有内容，可能是权限或 journald 未启用）\n' >&2
+    fi
+
+    # 2) 组件自检
+    printf '\n' >&2
+    log_info "---- 配置检查 ----"
+    case "$svc" in
+        nginx)
+            "$NGINX_BIN" -t -c "$NGINX_HOME/conf/nginx.conf" -p "$NGINX_HOME" 2>&1 | sed 's/^/       /' >&2
+            ;;
+        apache)
+            "$APACHE_BIN" -t -f "$APACHE_HOME/conf/httpd.conf" 2>&1 | sed 's/^/       /' >&2
+            ;;
+        php)
+            "$PHP_FPM_BIN" -t -c "$PHP_HOME/etc" -y "$PHP_HOME/etc/php-fpm.conf" 2>&1 | sed 's/^/       /' >&2
+            ;;
+        mysql)
+            tail -n 15 "$MYSQL_HOME/log/error.log" 2>/dev/null | sed 's/^/       /' >&2 || printf '       （没有 error.log）\n' >&2
+            ;;
+        ftp)
+            tail -n 15 "$FTP_HOME/logs/vsftpd.log" 2>/dev/null | sed 's/^/       /' >&2 || printf '       （没有 vsftpd.log）\n' >&2
+            ;;
+    esac
+
+    # 3) 端口与权限两条通用线索
+    printf '\n' >&2
+    log_info "---- 环境线索 ----"
+    printf '       端口占用: %s\n' "$(ss -lnt 2>/dev/null | grep -E ':80 |:443 ' | tr -s ' ' | cut -d' ' -f4 | tr '\n' ' ')" >&2
+    printf '       nofile  : 软 %s / 硬 %s\n' "$(ulimit -Sn)" "$(ulimit -Hn)" >&2
+    printf '       SELinux : %s\n' "$(getenforce 2>/dev/null || echo 未启用)" >&2
+    printf '\n       完整日志: journalctl -u %s -n 50 --no-pager\n' "$unit" >&2
+}
+
+svc_do() {
+    local action="$1" svc="$2" unit
+    if [ "$SUPERVISOR" = "systemd" ]; then
+        unit="$(unit_name "$svc")"
+        [ -f "/etc/systemd/system/$unit" ] || { log_warn "服务单元不存在: $unit"; return 1; }
+
+        # 起之前先做组件自检：配置错在这里就说清楚，不等 systemd 报一句没用的
+        if [ "$action" = "start" ] || [ "$action" = "restart" ]; then
+            local chk
+            case "$svc" in
+                nginx)  chk="$("$NGINX_BIN" -t -c "$NGINX_HOME/conf/nginx.conf" -p "$NGINX_HOME" 2>&1)" ;;
+                apache) chk="$("$APACHE_BIN" -t -f "$APACHE_HOME/conf/httpd.conf" 2>&1)" ;;
+                php)    chk="$("$PHP_FPM_BIN" -t -c "$PHP_HOME/etc" -y "$PHP_HOME/etc/php-fpm.conf" 2>&1)" ;;
+                *)      chk="" ;;
+            esac
+            if printf '%s' "$chk" | grep -qiE '\[emerg\]|test failed|syntax error|AH00526|failed to|abort'; then
+                log_error "$svc 配置检查未通过"
+                printf '%s\n' "$chk" | sed 's/^/       /' >&2
+                return 1
+            fi
+        fi
+
+        systemctl "$action" "$unit" >/dev/null 2>&1
+        local rc=$?
+
+        # Type=simple 下 systemctl 只要 exec 成功就返回 0，进程秒退也会"成功"，
+        # 所以必须再查一次 is-active
+        if [ "$action" = "start" ] || [ "$action" = "restart" ]; then
+            sleep 1
+            if ! systemctl is-active --quiet "$unit"; then
+                log_error "$svc: 启动后立即退出"
+                diag_service_failure "$svc" "$unit"
+                return 1
+            fi
+        fi
+
+        if [ "$rc" -eq 0 ]; then
+            log_ok "$svc: systemctl $action 成功"
+            return 0
+        fi
+        log_error "$svc: systemctl $action 失败"
+        diag_service_failure "$svc" "$unit"
+        return 1
+    fi
+    case "$action" in
+        start)   svc_start_pidfile "$svc" ;;
+        stop)    svc_stop_pidfile "$svc" ;;
+        restart) svc_stop_pidfile "$svc"; svc_start_pidfile "$svc" ;;
+        *) return 1 ;;
+    esac
+}
+
+svc_active() {
+    local svc="$1" unit pid
+    if [ "$SUPERVISOR" = "systemd" ]; then
+        unit="$(unit_name "$svc")"
+        systemctl is-active --quiet "$unit" 2>/dev/null && { echo "running"; return 0; }
+        echo "stopped"; return 1
+    fi
+    pid="$(cat "$(pid_file "$svc")" 2>/dev/null || true)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "running"; return 0; fi
+    echo "stopped"; return 1
+}
+
+expand_targets() {
+    case "${1:-all}" in
+        all)    printf '%s\n' $SERVICES ;;
+        nginx|apache|php|mysql) printf '%s\n' "$1" ;;
+        *) die "$E_GENERIC" "未知服务: $1（可选: all nginx apache php mysql）" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# 命令实现
+# ---------------------------------------------------------------------------
+cmd_start()   {
+    local t
+    for t in $(expand_targets "${1:-all}"); do svc_do start "$t"; done
+    # start all 时顺带拉起面板（独立 php -S 服务）
+    if [ "${1:-all}" = "all" ] || [ "${1:-}" = "panel" ]; then
+        svc_do start panel >/dev/null 2>&1 || true
+    fi
+}
+cmd_stop()    { local t; for t in $(expand_targets "${1:-all}"); do svc_do stop "$t"; done; }
+cmd_restart() { local t; for t in $(expand_targets "${1:-all}"); do svc_do restart "$t"; done; }
+
+# Nginx 与 Apache 共用 HTTP 端口，切换 = 停一个再起另一个
+cmd_switch() {
+    local target="${1:-}"
+    case "$target" in
+        nginx|apache) ;;
+        *) die "$E_GENERIC" "用法: xiaohuang switch <nginx|apache>" ;;
+    esac
+    [ "$target" = "apache" ] && [ -z "$APACHE_BIN" ] && \
+        die "$E_GENERIC" "Apache 未安装。重新安装时加 --with-apache 参数。"
+    if [ "$target" = "$WEB_SERVER" ]; then
+        log_info "当前已经是 $target"
+        return 0
+    fi
+    log_info "停止当前 Web 服务器: $WEB_SERVER"
+    svc_do stop "$WEB_SERVER" >/dev/null 2>&1 || true
+    log_info "启动目标 Web 服务器: $target"
+    svc_do start "$target" || die "$E_START" "$target 启动失败"
+    # 同步开机自启：只让当前 Web 服务器开机启动，否则重启后旧的那个会抢回端口
+    if [ "$SUPERVISOR" = "systemd" ]; then
+        systemctl disable "xiaohuang-$WEB_SERVER.service" >/dev/null 2>&1 || true
+        systemctl enable  "xiaohuang-$target.service"     >/dev/null 2>&1 || true
+        log_info "开机自启已切到 $target"
+    fi
+    manifest_set "$INSTALL_DIR" WEB_SERVER "$target"
+    WEB_SERVER="$target"
+    SERVICES="$target"
+    [ -n "$PHP_FPM_BIN" ] && SERVICES="$SERVICES php"
+    [ -n "$MYSQLD_BIN" ] && SERVICES="$SERVICES mysql"
+[ -n "$FTP_BIN" ] && SERVICES="$SERVICES ftp"
+    log_ok "Web 服务器已切换为 $target（端口 $HTTP_PORT）"
+}
+
+
+
+autostart_json() {
+    local list="$1" t u en st first=1
+    printf '['
+    for t in $list; do
+        u="xiaohuang-$t.service"
+        if [ ! -f "/etc/systemd/system/$u" ]; then
+            en="missing"; st="stopped"
+        else
+            en="$(systemctl is-enabled "$u" 2>/dev/null)"; [ -n "$en" ] || en=disabled
+            st="$(svc_active "$t" 2>/dev/null)"; [ -n "$st" ] || st=stopped; [ -n "$st" ] || st=stopped
+        fi
+        [ "$first" = "1" ] || printf ','
+        first=0
+        printf '{"name":"%s","enabled":"%s","status":"%s"}' "$t" "$en" "$st"
+    done
+    printf ']'
+}
+
+# 开机自启：xiaohuang autostart [status|on|off] [服务]
+cmd_autostart() {
+    local act="${1:-status}" svc="${2:-}"
+    [ "$SUPERVISOR" = "systemd" ] || { log_warn "当前不是 systemd 托管，没有开机自启概念"; return 0; }
+    local targets="$INSTALLED"
+    if [ "$svc" = "--json" ]; then
+        [ -n "$targets" ] || targets="nginx php mysql ftp panel"
+        autostart_json "$targets"
+        return 0
+    fi
+    [ -n "$svc" ] && targets="$svc"
+    [ -n "$targets" ] || targets="nginx php mysql ftp panel"
+
+    case "$act" in
+        status)
+            printf '%-10s %-12s %s\n' "服务" "开机自启" "当前状态"
+            local t u en st
+            for t in $targets; do
+                u="xiaohuang-$t.service"
+                [ -f "/etc/systemd/system/$u" ] || { printf '%-10s %-12s %s\n' "$t" "-" "未注册"; continue; }
+                en="$(systemctl is-enabled "$u" 2>/dev/null)"; [ -n "$en" ] || en=disabled
+                st="$(svc_active "$t" 2>/dev/null)"; [ -n "$st" ] || st=stopped; [ -n "$st" ] || st=stopped
+                printf '%-10s %-12s %s\n' "$t" "$en" "$st"
+            done
+            ;;
+        on|off)
+            local t n=0
+            for t in $targets; do
+                local u="xiaohuang-$t.service"
+                [ -f "/etc/systemd/system/$u" ] || continue
+                if [ "$act" = "on" ]; then
+                    systemctl enable "$u" >/dev/null 2>&1 && { log_ok "$t 已设为开机自启"; n=$((n+1)); }
+                else
+                    systemctl disable "$u" >/dev/null 2>&1 && { log_ok "$t 已取消开机自启"; n=$((n+1)); }
+                fi
+            done
+            [ "$n" -gt 0 ] || log_warn "没有匹配的服务单元"
+            ;;
+        *) die "$E_GENERIC" "用法: xiaohuang autostart [status|on|off] [服务]" ;;
+    esac
+}
+
+
+# 完整性校验：拿安装时生成的 .integrity 逐个比对
+cmd_verify() {
+    local f="$INSTALL_DIR/.integrity" out rc bid n
+    if [ ! -f "$f" ]; then
+        log_warn "找不到完整性清单，可能是旧版本或非官方构建"
+        return 0
+    fi
+    n="$(wc -l < "$f")"
+    log_info "校验 $n 个文件…"
+    out="$( cd "$INSTALL_DIR" && sha256sum -c --quiet .integrity 2>&1 )"
+    rc=$?
+    if [ "$rc" -eq 0 ] || [ -z "$out" ]; then
+        log_ok "全部与安装时一致"
+    else
+        log_warn "以下文件被改过："
+        printf '%s\n' "$out" | sed 's/^/       /'
+        log_warn "不是你自己改的，就重新装一遍官方包"
+        rc=1
+    fi
+    bid="$(m BUILD_ID)"
+    printf '构建指纹: %s\n' "${bid:-（无）}"
+    return $rc
+}
+
+cmd_status() {
+    if [ "${1:-}" = "--json" ]; then status_json; return 0; fi
+    printf 'Xiao Huang %s (%s)\n' "$(m VERSION)" "$(m BUILD)"
+    printf '安装目录: %s\n' "$INSTALL_DIR"
+    printf '管理方式: %s   当前 Web: %s\n' "$SUPERVISOR" "$WEB_SERVER"
+    local _bid; _bid="$(m BUILD_ID)"
+    [ -n "$_bid" ] && printf '构建指纹: %s\n' "$_bid"
+    printf '\n'
+    printf '%-8s %-10s %-30s %s\n' "服务" "状态" "版本" "端口"
+    printf '%-8s %-10s %-30s %s\n' "--------" "----------" "------------------------------" "-----"
+    local t st ver port mark
+    for t in $INSTALLED; do
+        mark=""
+        case "$t" in
+            nginx)  ver="Nginx ${NGINX_VER:-?}";  port="$HTTP_PORT" ;;
+            apache) ver="Apache ${APACHE_VER:-?}"; port="$HTTP_PORT" ;;
+            php)    ver="PHP ${PHP_VER:-?} (FPM)"; port="${PHP_FPM_PORT:-?}" ;;
+            mysql)  ver="MySQL ${MYSQL_VER:-?}";  port="$DB_PORT" ;;
+            ftp)    ver="FTP vsftpd ${FTP_VER:-?}"; port="$FTP_PORT" ;;
+        esac
+        [ "$t" = "$WEB_SERVER" ] && mark=" *"
+        st="$(svc_active "$t")"
+        printf '%-8s %-10s %-30s %s%s\n' "$t" "$st" "$ver" "$port" "$mark"
+    done
+    printf '\n* 为当前生效的 Web 服务器（Nginx/Apache 共用端口 %s，用 xiaohuang switch 切换）\n' "$HTTP_PORT"
+    local code
+    code="$(http_code "http://127.0.0.1:$HTTP_PORT/")"
+    printf 'HTTP %s: %s\n' "$HTTP_PORT" "${code:-无响应}"
+    [ -n "$PHP_FPM_PORT" ] && { code="$(http_code "http://127.0.0.1:$HTTP_PORT/index.php")"; printf 'PHP     : %s\n' "${code:-无响应}"; }
+    return 0
+}
+
+cmd_info() {
+    printf 'Xiao Huang 控制台\n'
+    printf '  版本    : %s (%s)\n' "$(m VERSION)" "$(m BUILD)"
+    printf '  平台    : %s\n' "$(m PLATFORM)"
+    printf '  发行版  : %s\n' "$(m DISTRO)"
+    printf '  安装目录: %s\n' "$INSTALL_DIR"
+    printf '  安装时间: %s\n' "$(m INSTALL_TIME)"
+    printf '  站点根  : %s\n' "$WWW_ROOT"
+    printf '  Nginx   : %s  %s\n' "${NGINX_VER:-未安装}" "${NGINX_HOME:-}"
+    printf '  PHP     : %s  %s\n' "${PHP_VER:-未安装}" "${PHP_HOME:-}"
+    printf '  Apache  : %s  %s\n' "${APACHE_VER:-未安装}" "${APACHE_HOME:-}"
+    printf '  MySQL   : %s  %s\n' "${MYSQL_VER:-未安装}" "${MYSQL_HOME:-}"
+    printf '  端口    : HTTP=%s  PHP-FPM=%s  MySQL=%s\n' "$HTTP_PORT" "${PHP_FPM_PORT:-N/A}" "${DB_PORT:-N/A}"
+    printf '  管理    : %s\n' "$SUPERVISOR"
+}
+
+cmd_port() {
+    local svc="${1:-}" port="${2:-}"
+    [ -n "$svc" ] && [ -n "$port" ] || die "$E_GENERIC" "用法: xiaohuang port <nginx|apache|php|mysql> <端口>"
+    case "$port" in ''|*[!0-9]*) die "$E_GENERIC" "端口必须是数字: $port" ;; esac
+    [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || die "$E_GENERIC" "端口范围 1-65535: $port"
+    if port_in_use "$port"; then die "$E_GENERIC" "端口 $port 已被占用"; fi
+
+    case "$svc" in
+        nginx)
+            printf '%s\n' "$port" > "$NGINX_HOME/conf/listen.port"
+            manifest_set "$INSTALL_DIR" HTTP_PORT "$port"
+            HTTP_PORT="$port"
+            render_vhosts nginx
+            svc_do restart nginx || true
+            ;;
+        apache)
+            printf 'Listen %s\n' "$port" > "$APACHE_HOME/conf/vhosts/Listen.conf"
+            render_vhosts apache
+            manifest_set "$INSTALL_DIR" HTTP_PORT "$port"
+            HTTP_PORT="$port"
+            svc_do restart apache || true
+            ;;
+        php)
+            sed -i "s#^listen = .*#listen = 127.0.0.1:${port}#" "$PHP_HOME/etc/php-fpm.conf" 2>/dev/null || true
+            manifest_set "$INSTALL_DIR" PHP_FPM_PORT "$port"
+            PHP_FPM_PORT="$port"
+            # 同步 nginx vhost 的 fastcgi_pass
+            render_vhosts nginx
+            svc_do restart php || true
+            svc_do restart nginx || true
+            ;;
+        mysql)
+            sed -i "s#^port=.*#port=${port}#" "$MYSQL_HOME/etc/my.cnf"
+            manifest_set "$INSTALL_DIR" DB_PORT "$port"
+            DB_PORT="$port"
+            svc_do restart mysql || true
+            ;;
+        *) die "$E_GENERIC" "未知服务: $svc" ;;
+    esac
+    log_ok "$svc 端口已改为 $port"
+}
+
+# 按清单里的实际端口重渲染 nginx/apache 的默认站点 vhost，
+# 让 "xiaohuang port nginx 8080" 之后站点仍然可访问
+render_vhosts() {
+    local kind="$1" vhosts
+    if [ "$kind" = "nginx" ]; then
+        vhosts="$NGINX_HOME/conf/vhosts"
+    else
+        vhosts="$APACHE_HOME/conf/vhosts"
+    fi
+    [ -d "$vhosts" ] || return 0
+    local f domain root port
+    for f in "$vhosts"/*.conf; do
+        [ -f "$f" ] || continue
+        case "$(basename "$f")" in Listen.conf) continue ;; esac
+        domain="$(awk '/server_name/{gsub(/;/,"",$2); print $2; exit}' "$f" 2>/dev/null)"
+        root="$(awk '/^[[:space:]]*root[[:space:]]|^[[:space:]]*DocumentRoot[[:space:]]/{gsub(/[;"]/,"",$2); print $2; exit}' "$f" 2>/dev/null)"
+        [ -n "$domain" ] || continue
+        [ -n "$root" ] || root="$WWW_ROOT"
+        if [ "$kind" = "nginx" ]; then
+            render "$INSTALL_DIR/conf/vhost.nginx.tpl" "$f" \
+                   "@DOMAIN@" "$domain" "@PORT@" "$HTTP_PORT" "@ROOT@" "$root" \
+                   "@PHP_FPM_PORT@" "${PHP_FPM_PORT:-9000}" "@LOG_DIR@" "$LOG_DIR" \
+                   "@SSL_CERT@" "" "@SSL_KEY@" ""
+        else
+            render "$INSTALL_DIR/conf/vhost.apache.tpl" "$f" \
+                   "@DOMAIN@" "$domain" "@PORT@" "$HTTP_PORT" "@ROOT@" "$root" "@LOG_DIR@" "$LOG_DIR"
+        fi
+    done
+}
+
+cmd_site() {
+    local sub="${1:-list}"; shift || true
+    mkdir -p "$INSTALL_DIR/conf"
+    [ -f "$INSTALL_DIR/conf/vhost.nginx.tpl" ] || cp -f "$NGINX_HOME/conf/vhost.tpl" "$INSTALL_DIR/conf/vhost.nginx.tpl" 2>/dev/null || true
+    case "$sub" in
+        add)
+            local domain="${1:-}" rootdir="${2:-}" port="${3:-$HTTP_PORT}"
+            [ -n "$domain" ] || die "$E_GENERIC" "用法: xiaohuang site add <域名> <站点目录> [端口]"
+            grep -qE '^[A-Za-z0-9.*_-]+(\.[A-Za-z0-9_-]+)*$' <<< "$domain" \
+                || die "$E_GENERIC" "域名不合法: $domain"
+            [ -n "$rootdir" ] || die "$E_GENERIC" "站点目录不能为空"
+            case "$rootdir" in /*) ;; *) rootdir="$WWW_ROOT/$rootdir" ;; esac
+            if str_has_space "$rootdir"; then die "$E_BAD_PATH" "站点目录不能含空格: $rootdir"; fi
+            if ! str_is_safe_path "$rootdir"; then die "$E_BAD_PATH" "站点目录含中文或非法字符: $rootdir"; fi
+            mkdir -p "$rootdir"
+            [ -f "$rootdir/index.php" ] || printf '<?php echo "Xiao Huang site: %s";\n' "$domain" > "$rootdir/index.php"
+            [ -f "$rootdir/index.html" ] || printf '<h1>Xiao Huang site: %s</h1>\n' "$domain" > "$rootdir/index.html"
+
+            render "$INSTALL_DIR/conf/vhost.nginx.tpl" "$NGINX_HOME/conf/vhosts/${domain}-${port}.conf" \
+                   "@DOMAIN@" "$domain" "@PORT@" "$port" "@ROOT@" "$rootdir" \
+                   "@PHP_FPM_PORT@" "${PHP_FPM_PORT:-9000}" "@LOG_DIR@" "$LOG_DIR" \
+                   "@SSL_CERT@" "" "@SSL_KEY@" ""
+            if [ -n "$APACHE_HOME" ]; then
+                [ -f "$INSTALL_DIR/conf/vhost.apache.tpl" ] || cp -f "$APACHE_HOME/conf/vhost.tpl" "$INSTALL_DIR/conf/vhost.apache.tpl"
+                render "$INSTALL_DIR/conf/vhost.apache.tpl" "$APACHE_HOME/conf/vhosts/${domain}-${port}.conf" \
+                       "@DOMAIN@" "$domain" "@PORT@" "$port" "@ROOT@" "$rootdir" "@LOG_DIR@" "$LOG_DIR"
+            fi
+            # hosts 提示
+            if ! grep -qE "[[:space:]]${domain}([[:space:]]|$)" /etc/hosts 2>/dev/null; then
+                log_info "如需本机用域名访问，请执行: echo '127.0.0.1 $domain' >> /etc/hosts"
+            fi
+            svc_do restart nginx >/dev/null 2>&1 || true
+            [ -n "$APACHE_HOME" ] && { svc_do restart apache >/dev/null 2>&1 || true; }
+            log_ok "站点已添加: $domain -> $rootdir (端口 $port)"
+            ;;
+        list)
+            if [ "${1:-}" = "--json" ]; then site_list_json; return 0; fi
+            printf '%-28s %-8s %s\n' "域名" "端口" "目录"
+            local f d p r
+            for f in "$NGINX_HOME/conf/vhosts"/*.conf; do
+                [ -f "$f" ] || continue
+                case "$(basename "$f")" in Listen.conf) continue ;; esac
+                d="$(awk '/server_name/{gsub(/;/,"",$2); print $2; exit}' "$f")"
+                p="$(awk '/listen/{gsub(/;/,"",$2); print $2; exit}' "$f")"
+                r="$(awk '/^[[:space:]]*root[[:space:]]/{gsub(/[;"]/,"",$2); print $2; exit}' "$f")"
+                printf '%-28s %-8s %s\n' "${d:-?}" "${p:-?}" "${r:-?}"
+            done
+            ;;
+        ssl)
+            site_ssl "${1:-}" "${2:-}" "${3:-}" ;;
+        ssl-del)
+            site_ssl_del "${1:-}" ;;
+        edit)
+            site_edit "$@" ;;
+        del)
+            local domain="${1:-}"
+            [ -n "$domain" ] || die "$E_GENERIC" "用法: xiaohuang site del <域名>"
+            local n=0 f
+            for f in "$NGINX_HOME/conf/vhosts/${domain}-"*.conf "$APACHE_HOME/conf/vhosts/${domain}-"*.conf; do
+                [ -f "$f" ] || continue
+                rm -f "$f"; n=$((n+1))
+            done
+            [ "$n" -gt 0 ] || die "$E_GENERIC" "未找到站点: $domain"
+            svc_do restart nginx >/dev/null 2>&1 || true
+            [ -n "$APACHE_HOME" ] && { svc_do restart apache >/dev/null 2>&1 || true; }
+            log_ok "已删除站点 $domain（$n 个配置文件）"
+            ;;
+        *) die "$E_GENERIC" "用法: xiaohuang site <add|list|del>" ;;
+    esac
+}
+
+cmd_db() {
+    local sub="${1:-init}"
+    [ -n "$MYSQLD_BIN" ] || die "$E_GENERIC" "未安装 MariaDB/MySQL 组件"
+    local mysql_cli
+    # 内置组件优先用自带的客户端（不依赖系统 mysql-client）
+    mysql_cli="$(first_bin "$MYSQL_HOME/bin/mysql" "$MYSQL_HOME/bin/mariadb" \
+                           /usr/bin/mysql /usr/bin/mariadb /usr/local/mysql/bin/mysql || true)"
+    [ -n "$mysql_cli" ] || die "$E_DEP" "缺少 mysql 客户端"
+    mysql_cli="$(readlink -f "$mysql_cli" 2>/dev/null || echo "$mysql_cli")"
+
+    # MariaDB 与 MySQL 的改密语法不同
+    local is_mariadb=0
+    if "$MYSQLD_BIN" --version 2>/dev/null | grep -qi mariadb; then is_mariadb=1; fi
+
+    set_pass_sql() {
+        local p="$1"
+        if [ "$is_mariadb" = "1" ]; then
+            printf "SET PASSWORD FOR 'root'@'localhost' = PASSWORD('%s');\nFLUSH PRIVILEGES;\n" "$p"
+        else
+            printf "ALTER USER 'root'@'localhost' IDENTIFIED BY '%s';\nFLUSH PRIVILEGES;\n" "$p"
+        fi
+    }
+
+    case "$sub" in
+        init)
+            local pass="${2:-root}"
+            svc_active mysql >/dev/null 2>&1 || svc_do start mysql || die "$E_START" "数据库未能启动"
+            if "$mysql_cli" -uroot --socket="$RUN_DIR/mysql.sock" -e "SELECT 1" >/dev/null 2>&1; then
+                log_info "root 当前无密码，正在设置密码"
+                set_pass_sql "$pass" | "$mysql_cli" -uroot --socket="$RUN_DIR/mysql.sock" \
+                    || die "$E_GENERIC" "设置 root 密码失败"
+            else
+                log_info "root 已有密码，跳过（如需重置: xiaohuang db passwd <新密码>）"
+                return 0
+            fi
+            manifest_set "$INSTALL_DIR" DB_ROOT_PASS "$pass"
+            log_ok "root 密码已设为: $pass"
+            ;;
+        passwd)
+            local pass="${2:-}"
+            [ -n "$pass" ] || die "$E_GENERIC" "用法: xiaohuang db passwd <新密码>"
+            local old; old="$(m DB_ROOT_PASS)"
+            set_pass_sql "$pass" | "$mysql_cli" -uroot ${old:+-p"$old"} --socket="$RUN_DIR/mysql.sock" \
+                || die "$E_GENERIC" "修改密码失败"
+            manifest_set "$INSTALL_DIR" DB_ROOT_PASS "$pass"
+            log_ok "root 密码已更新"
+            ;;
+        list)
+            db_list_json ;;
+        create)
+            db_create "${1:-}" "${2:-}" "${3:-}" ;;
+        drop)
+            db_drop "${1:-}" ;;
+        import)
+            db_import "${1:-}" "${2:-}" ;;
+        export)
+            db_export "${1:-}" "${2:-}" ;;
+        *) die "$E_GENERIC" "用法: xiaohuang db <init|passwd|list|create|drop|import|export>" ;;
+    esac
+}
+
+cmd_log() {
+    local svc="${1:---help}" follow="${2:-}"
+    local f="" label=""
+    case "$svc" in
+        nginx)  f="$LOG_DIR/nginx-error.log";   label="Nginx 错误" ;;
+        access)
+            case "$WEB_SERVER" in
+                apache) f="$(ls -t "$LOG_DIR"/*access*.log 2>/dev/null | head -1)" ;;
+                *)      f="$(ls -t "$LOG_DIR"/*access*.log 2>/dev/null | head -1)" ;;
+            esac
+            label="访问日志" ;;
+        php)    f="$LOG_DIR/php-fpm.log";       label="PHP-FPM" ;;
+        apache) f="$LOG_DIR/apache-error.log";  label="Apache 错误" ;;
+        mysql)  f="$MYSQL_HOME/log/error.log";  label="MySQL 错误" ;;
+        ftp)    f="$FTP_HOME/logs/vsftpd.log";  label="FTP" ;;
+        panel)
+            if [ "$SUPERVISOR" = "systemd" ]; then
+                journalctl -u xiaohuang-panel -n 80 --no-pager 2>/dev/null || printf '（读不到面板日志）\n'
+            else
+                printf '（面板日志只在 systemd 托管时可用）\n'
+            fi
+            return 0 ;;
+        *) die "$E_GENERIC" "用法: xiaohuang log <nginx|access|php|apache|mysql|ftp|panel> [-f]" ;;
+    esac
+
+    if [ -z "$f" ] || [ ! -f "$f" ]; then
+        printf '（%s 日志还没有生成）\n' "$label"
+        printf '路径: %s\n' "${f:-未配置}"
+        printf '一般是该服务还没启动过，或者运行期间没产生日志。\n'
+        printf '另：sudo xiaohuang status 可以看到各服务当前状态。\n'
+        return 0
+    fi
+    if [ "$follow" = "-f" ]; then tail -n 50 -f "$f"; else tail -n 80 "$f"; fi
+}
+
+cmd_repair() {
+    log_info "重建配置（保留数据目录与站点）"
+    [ -n "$NGINX_HOME" ] && {
+        [ -f "$INSTALL_DIR/conf/vhost.nginx.tpl" ] || cp -f "$NGINX_HOME/conf/vhost.tpl" "$INSTALL_DIR/conf/vhost.nginx.tpl" 2>/dev/null || true
+        "$NGINX_BIN" -t -c "$NGINX_HOME/conf/nginx.conf" -p "$NGINX_HOME" && log_ok "nginx 配置语法正确" || log_error "nginx 配置有误"
+    }
+    [ -n "$PHP_FPM_BIN" ] && { "$PHP_FPM_BIN" -t -c "$PHP_HOME/etc" -y "$PHP_HOME/etc/php-fpm.conf" && log_ok "php-fpm 配置正确" || log_warn "php-fpm 配置检查未通过"; }
+    [ -n "$APACHE_BIN" ] && { "$APACHE_BIN" -t -f "$APACHE_HOME/conf/httpd.conf" && log_ok "apache 配置正确" || log_warn "apache 配置检查未通过"; }
+    svc_do restart all >/dev/null 2>&1 || true
+}
+
+cmd_uninstall() {
+    local purge="${1:-}"
+    "$INSTALL_DIR/uninstall.sh" $purge
+}
+
+cmd_help() {
+    cat <<EOF
+Xiao Huang 控制台 —— 银河麒麟 ARM64
+
+用法: xiaohuang <命令> [参数]
+
+  服务
+    start   [all|nginx|apache|php|mysql]    启动服务
+    stop    [all|...]                        停止服务
+    restart [all|...]                        重启服务
+    switch  <nginx|apache>                   切换 Web 服务器（同一端口，二选一）
+    status                                   查看运行状态与自检
+
+  配置
+    port <nginx|apache|php|mysql> <端口>     修改端口并重启
+    site add <域名> <目录> [端口]            添加站点（生成 vhost 并重载）
+    site list                                列出站点
+    site del <域名>                          删除站点
+    db init [密码]                           初始化 MySQL root 密码（默认 root）
+    db passwd <新密码>                       修改 MySQL root 密码
+    repair                                   校验并重建配置
+
+  其他
+    info                                     显示安装信息
+    log <nginx|php|apache|mysql> [-f]        查看日志
+    uninstall [--purge]                      卸载（--purge 同时删除站点与数据库数据）
+    version | help
+
+退出码: 0 成功 | 2 路径含中文或空格 | 3 路径已有 V8 | 4 架构不符 | 6 依赖缺失 | 7 启动失败
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# 分发
+# ---------------------------------------------------------------------------
+case "${1:-help}" in
+    start)     cmd_start   "${2:-all}" ;;
+    stop)      cmd_stop    "${2:-all}" ;;
+    restart)   cmd_restart "${2:-all}" ;;
+    switch)    cmd_switch  "${2:-}" ;;
+    autostart) cmd_autostart "${2:-status}" "${3:-}" ;;
+    verify)    cmd_verify ;;
+    status)    cmd_status "${2:-}" ;;
+    info)      cmd_info ;;
+    port)      cmd_port    "${2:-}" "${3:-}" ;;
+    site)      shift; cmd_site "$@" ;;
+    db)        shift; cmd_db "$@" ;;
+    log)       cmd_log     "${2:-}" "${3:-}" ;;
+    repair)    cmd_repair ;;
+    verify)    cmd_verify ;;
+    uninstall) cmd_uninstall "${2:-}" ;;
+    version)
+        case "${2:-}" in
+            list) ver_list_json ;;
+            use)  ver_use "${3:-}" "${4:-}" ;;
+            *)    printf 'Xiao Huang %s (%s)\n' "$(m VERSION)" "$(m BUILD)"
+                  printf 'build %s\n' "$(m BUILD_ID)"
+                  printf 'by 小黄 · 15359927763 · QQ 1924053793\n' ;;
+        esac ;;
+    ext)
+        shift
+        case "${1:-list}" in
+            list|--json) ext_list_json ;;
+            enable)  ext_set "${2:-}" enable ;;
+            disable) ext_set "${2:-}" disable ;;
+            stat)    ext_set "${2:-}" "" ;;
+            *) die "$E_GENERIC" "用法: xiaohuang ext <list|enable|disable> <扩展名>" ;;
+        esac ;;
+    module)
+        shift
+        case "${1:-list}" in
+            list|--json) module_list_json ;;
+            enable)  module_set "${2:-}" enable ;;
+            disable) module_set "${2:-}" disable ;;
+            *) die "$E_GENERIC" "用法: xiaohuang module <list|enable|disable> <模块名>" ;;
+        esac ;;
+    ports)     port_list_json ;;
+    kill)      shift; kill_target "$@" ;;
+    hosts)     shift; hosts_set "$@" ;;
+    ftp)
+        case "${2:-list}" in
+            list|--json) ftp_user_list_json ;;
+            add)    ftp_user_add "${3:-}" "${4:-}" "${5:-}" ;;
+            del)    ftp_user_del "${3:-}" ;;
+            passwd) ftp_passwd "${3:-}" "${4:-}" ;;
+            port)   ftp_port "${3:-}" ;;
+            *) die "$E_GENERIC" "用法: xiaohuang ftp <list|add 账号 目录 [密码]|del 账号|passwd 账号 密码|port 端口>" ;;
+        esac ;;
+    panel)
+        case "${2:-url}" in
+            passwd) panel_passwd "${3:-}" ;;
+            url)    panel_url ;;
+            *) die "$E_GENERIC" "用法: xiaohuang panel <url|passwd 新密码>" ;;
+        esac ;;
+    help|-h|--help) cmd_help ;;
+    *)         log_error "未知命令: $1"; cmd_help; exit "$E_GENERIC" ;;
+esac

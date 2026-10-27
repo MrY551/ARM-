@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>@CODE@ @TITLE@ - Xiao Huang</title>
+<style>
+  :root{--bg:#f5f7fa;--card:#fff;--pri:#2f8f6b;--txt:#243244;--sub:#6b7b8f;--line:#e3e9f0}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:var(--bg);color:var(--txt);
+       font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans CJK SC","WenQuanYi Micro Hei","Microsoft Yahei",sans-serif;
+       display:flex;align-items:center;justify-content:center;padding:24px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:38px 40px;max-width:560px;width:100%;
+        box-shadow:0 8px 28px rgba(35,60,90,.07);text-align:center}
+  .code{font-size:76px;font-weight:800;line-height:1;letter-spacing:2px;
+        background:linear-gradient(135deg,#37a97c,#22695a);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .title{font-size:20px;font-weight:600;margin:14px 0 8px}
+  .desc{font-size:14.5px;color:var(--sub);margin:0 0 26px}
+  a.btn{display:inline-block;padding:9px 22px;border-radius:9px;background:var(--pri);color:#fff;text-decoration:none;font-size:14.5px;font-weight:600}
+  a.btn:hover{filter:brightness(1.06)}
+  .foot{margin-top:22px;font-size:12.5px;color:#9aa9ba}
+  @media (max-width:480px){.card{padding:28px 20px}.code{font-size:56px}}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="code">@CODE@</div>
+    <div class="title">@TITLE@</div>
+    <p class="desc">请求未能完成，请检查地址是否正确，或稍后重试。</p>
+    <a class="btn" href="/">返回首页</a>
+    <div class="foot">Xiao Huang · 银河麒麟 ARM64</div>
+  </div>
+</body>
+</html>
