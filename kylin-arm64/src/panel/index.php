@@ -17,7 +17,7 @@ define('BASE', dirname(__DIR__, 2));                 // <InstallDir>
 define('CLI', BASE . '/bin/xiaohuang');
 define('MANIFEST', BASE . '/xiaohuang.ini');
 define('DATA', __DIR__ . '/data');
-define('VERSION', '0.0.0.1Beta');
+define('VERSION', '0.0.0.2Beta');
 // 面板位于 <INSTALL_DIR>/app/panel，往上两级就是安装根
 define('ROOT_DIR', dirname(dirname(__DIR__)));
 
@@ -529,7 +529,7 @@ $needSetup = ($hash === '');
     </label>
     <button class="btn primary block" type="submit" <?= $needSetup ? 'disabled' : '' ?>>登 录</button>
     <div class="err" id="loginErr"></div>
-    <div class="foot-mini">Xiao Huang 0.0.0.1Beta · by 小黄 · 15359927763</div>
+    <div class="foot-mini">Xiao Huang 0.0.0.2Beta · by 小黄 · 15359927763</div>
   </form>
 </div>
 <?php else: ?>

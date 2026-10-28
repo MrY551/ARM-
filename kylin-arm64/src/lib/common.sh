@@ -15,7 +15,7 @@ E_PERM=5           # 非 root
 E_DEP=6            # 依赖缺失
 E_START=7          # 服务启动失败
 
-XIAOHUANG_VERSION="0.0.0.1Beta"
+XIAOHUANG_VERSION="0.0.0.2Beta"
 XIAOHUANG_BUILD="kylin-arm64-1"
 MANIFEST_NAME="xiaohuang.ini"
 

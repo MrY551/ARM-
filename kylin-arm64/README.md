@@ -1,4 +1,4 @@
-# Xiao Huang 0.0.0.1Beta for Kylin ARM64
+# Xiao Huang 0.0.0.2Beta for Kylin ARM64
 
 把 phpStudy V8（Windows 版 `phpstudy_x64_8.1.1.3.exe`）的安装契约——目录布局、组件配置、
 站点模板、路径规则——复刻成银河麒麟 V10 / aarch64 的安装包，并换成自有品牌 **Xiao Huang**。
@@ -20,8 +20,8 @@
 ```
 kylin-arm64/
 ├── dist/
-│   ├── xiaohuang-kylin-arm64_0.0.0.1Beta_arm64.deb   91 MB  组件内置，dpkg 安装
-│   └── xiaohuang-kylin-arm64-0.0.0.1Beta.run         93 MB  组件内置，自解压
+│   ├── xiaohuang-kylin-arm64_0.0.0.2Beta_arm64.deb   91 MB  组件内置，dpkg 安装
+│   └── xiaohuang-kylin-arm64-0.0.0.2Beta.run         93 MB  组件内置，自解压
 ├── build.sh                       构建 .run 与 .deb（自动带上 payload/components）
 ├── make-bundle.sh                 在联网 arm64 上从系统仓库做离线组件包（备选）
 ├── tools/gen-components.sh        从 arm64 sysroot 生成内置组件包
@@ -36,15 +36,15 @@ kylin-arm64/
 .deb：
 
 ```bash
-sudo dpkg -i xiaohuang-kylin-arm64_0.0.0.1Beta_arm64.deb
+sudo dpkg -i xiaohuang-kylin-arm64_0.0.0.2Beta_arm64.deb
 sudo xiaohuang start
 ```
 
 `.run`：
 
 ```bash
-chmod +x xiaohuang-kylin-arm64-0.0.0.1Beta.run
-sudo ./xiaohuang-kylin-arm64-0.0.0.1Beta.run --dir /opt/xiaohuang --with-apache
+chmod +x xiaohuang-kylin-arm64-0.0.0.2Beta.run
+sudo ./xiaohuang-kylin-arm64-0.0.0.2Beta.run --dir /opt/xiaohuang --with-apache
 ```
 
 安装器自动：校验路径规则 → 解包内置组件 → 渲染配置 → 初始化 MariaDB → 注册 systemd 单元 →

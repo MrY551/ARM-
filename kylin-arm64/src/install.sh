@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Xiao Huang for Kylin ARM64 —— 安装器主程序
-# 与 Windows 版 xiaohuang_x64_0.0.0.1Beta.exe 的安装契约对齐：
+# 与 Windows 版安装器的安装契约对齐（目录布局 / 组件配置 / 路径规则）：
 #   目录布局 app/COM app/Extensions app/WWW
 #   路径规则：不允许中文/空格；安装路径必须纯净（不能已有 V8）
 #   组件：Nginx / Apache / PHP(php-cgi/FPM) / MySQL / FTP / ErrorPages

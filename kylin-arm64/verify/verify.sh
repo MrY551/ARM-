@@ -127,8 +127,8 @@ else
     ng "缺少:$missing"
 fi
 
-if grep -q '^VERSION=0.0.0.1Beta' "$TEST_DIR/xiaohuang.ini" 2>/dev/null; then
-    ok "安装清单版本正确（0.0.0.1Beta）"
+if grep -q '^VERSION=0.0.0.2Beta' "$TEST_DIR/xiaohuang.ini" 2>/dev/null; then
+    ok "安装清单版本正确（0.0.0.2Beta）"
 else
     ng "安装清单版本不正确"
 fi

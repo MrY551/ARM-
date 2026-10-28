@@ -513,7 +513,7 @@
         <span class="logo">XH</span>
         <div class="about-hero-txt">
           <b>Xiao Huang</b>
-          <span>0.0.0.1Beta · 麒麟 ARM64 · 组件全在包里，断网也能装</span>
+          <span>0.0.0.2Beta · 麒麟 ARM64 · 组件全在包里，断网也能装</span>
         </div>
         <span class="tag">Beta</span>
       </div>

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Xiao Huang for Kylin ARM64 —— 构建脚本
 # 产物:
-#   dist/xiaohuang-kylin-arm64-0.0.0.1Beta.run   自解压安装器（推荐，麒麟 V10 直接运行）
-#   dist/xiaohuang-kylin-arm64_0.0.0.1Beta_arm64.deb   Debian 系安装包（可选）
+#   dist/xiaohuang-kylin-arm64-0.0.0.2Beta.run   自解压安装器（推荐，麒麟 V10 直接运行）
+#   dist/xiaohuang-kylin-arm64_0.0.0.2Beta_arm64.deb   Debian 系安装包（可选）
 # 用法: ./build.sh [--no-deb]
 set -euo pipefail
 
@@ -10,7 +10,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$HERE/src"
 DIST="$HERE/dist"
 # 允许用环境变量覆盖（打图形安装器兼容包时用纯数字版本号）
-VERSION="${VERSION:-0.0.0.1Beta}"
+VERSION="${VERSION:-0.0.0.2Beta}"
 PKG="xiaohuang-kylin-arm64"
 DO_DEB=1
 [ "${1:-}" = "--no-deb" ] && DO_DEB=0
@@ -109,7 +109,7 @@ RUN="$DIST/${PKG}-${VERSION}.run"
 cat > "$WORK/stub.sh" <<'STUB'
 #!/bin/bash
 # Xiao Huang for Kylin ARM64 —— 自解压安装器
-# 运行: sudo ./xiaohuang-kylin-arm64-0.0.0.1Beta.run [--dir /opt/xiaohuang] [其他参数]
+# 运行: sudo ./xiaohuang-kylin-arm64-0.0.0.2Beta.run [--dir /opt/xiaohuang] [其他参数]
 # 参数与 install.sh 一致，--help 查看全部选项
 set -u
 

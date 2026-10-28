@@ -178,8 +178,8 @@ systemd 之前就被拦下并打印 `[emerg]` 原文；启动后 1 秒再查 `is
 ## 6. 交付物
 
 ```
-xiaohuang-kylin-arm64_0.0.0.1Beta_arm64.deb     92 MB
-xiaohuang-kylin-arm64-0.0.0.1Beta.run           93 MB
+xiaohuang-kylin-arm64_0.0.0.2Beta_arm64.deb     92 MB
+xiaohuang-kylin-arm64-0.0.0.2Beta.run           93 MB
 ```
 
 两个装的是同一套东西，只能装一个（单元名固定，第二个会被拒，退出码 3）。
@@ -230,7 +230,7 @@ $ ./verify/verify.sh
 
 ```
 $ sudo xiaohuang status
-Xiao Huang 0.0.0.1Beta (kylin-arm64-1)
+Xiao Huang 0.0.0.2Beta (kylin-arm64-1)
 安装目录: /opt/xiaohuang
 管理方式: systemd   当前 Web: nginx
 构建指纹: 202610271304-309ccf74
@@ -277,7 +277,7 @@ sudo chroot /root/arm64 /debootstrap/debootstrap --second-stage
 ## 9. 安装与验收
 
 ```bash
-sudo dpkg -i xiaohuang-kylin-arm64_0.0.0.1Beta_arm64.deb
+sudo dpkg -i xiaohuang-kylin-arm64_0.0.0.2Beta_arm64.deb
 sudo xiaohuang start
 ```
 
