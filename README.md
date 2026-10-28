@@ -345,7 +345,15 @@ sudo bash /opt/xiaohuang/xh-diag.sh
 
 ## 12. 许可
 
-见 [LICENSE](LICENSE)。可自由使用、修改、商用，分发时保留署名与声明。
+见 [LICENSE](LICENSE)。
+
+可以自由使用、修改、商用、再分发，也可以收费。唯一不能做的是去掉署名——
+作者名、联系方式、LICENSE 原文、BUILD_ID、`.integrity` 必须保留。
+
+改版对外分发，要在三处标注「非官方修改版」：`xiaohuang version` 的输出、
+面板每页页脚、安装包文件名。
+
+`sudo xiaohuang verify` 会核对包括署名行在内的 15 个文件，被改过会直接指出来。
 
 ---
 
